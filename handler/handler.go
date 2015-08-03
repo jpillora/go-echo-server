@@ -57,6 +57,7 @@ func New(c Config) http.Handler {
 type request struct {
 	Time                          time.Time
 	Duration                      string
+	Location                      string `json:",omitempty"`
 	IP, Proto, Host, Method, Path string
 	Headers                       map[string]string
 	Body, BodyURL, BodyMD5        string `json:",omitempty"`
@@ -69,22 +70,29 @@ var (
 	delayPath    = regexp.MustCompile(`\/(sleep|delay)\/([0-9]+)(m?s)?(\/$)?`)
 	statusPath   = regexp.MustCompile(`\/status\/([0-9]{3})(\/$)?`)
 	echoPath     = regexp.MustCompile(`^\/echo(es)?(\/([0-9]+))?$`)
+	cityPath     = regexp.MustCompile(`(-[A-Z]+)$`)
 	defaultmtype = "application/octet-stream"
 )
 
 func (e *echoHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h := r.Header
 
 	//echo request
 	req := &request{
-		Time:    time.Now(),
-		Method:  r.Method,
-		Host:    r.Host,
-		Path:    r.URL.RequestURI(),
-		Headers: map[string]string{},
+		Time:     time.Now(),
+		Location: h.Get("cf-ipcountry"),
+		Method:   r.Method,
+		Host:     r.Host,
+		Path:     r.URL.RequestURI(),
+		Headers:  map[string]string{},
+	}
+
+	//extract city from cloudflare ray ID
+	if m := cityPath.FindStringSubmatch(h.Get("cf-ray")); len(m) > 0 {
+		req.Location += m[1]
 	}
 
 	//get ip address
-	h := r.Header
 	req.IP = h.Get("CF-Connecting-IP")
 	if req.IP == "" {
 		req.IP = h.Get("X-Forwarded-For")
@@ -102,6 +110,7 @@ func (e *echoHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	//handle stats
 	e.lock.Lock()
 	if m := echoPath.FindStringSubmatch(req.Path); len(m) > 0 {
 		var v interface{}
@@ -138,6 +147,7 @@ func (e *echoHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	//copy headers
 	size := bytes.MinRead
 	for k, _ := range h {
 		k = strings.ToLower(k)
@@ -146,9 +156,9 @@ func (e *echoHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if n, err := strconv.Atoi(v); err == nil {
 				size = n
 			}
-		} /*else if strings.HasPrefix(k, "cf-") {
+		} else if strings.HasPrefix(k, "cf-") || strings.HasPrefix(k, "x-") {
 			continue
-		}*/
+		}
 		req.Headers[k] = v
 	}
 
@@ -208,7 +218,7 @@ func (e *echoHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	req.Duration = time.Since(req.Time).String()
 	b, _ := json.MarshalIndent(req, "", "  ")
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json; charset=utf8")
 	w.WriteHeader(status)
 	w.Write(b)
 }
