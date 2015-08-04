@@ -1,0 +1,22 @@
+{
+	"ImportPath": "github.com/jpillora/go-echo-server",
+	"GoVersion": "go1.4.2",
+	"Deps": [
+		{
+			"ImportPath": "github.com/jpillora/opts",
+			"Rev": "019b00bcdc616f881fc1f669d040aea7c74c295d"
+		},
+		{
+			"ImportPath": "github.com/jpillora/requestlog",
+			"Rev": "16ad974670777624b4018a3236577c0dcad9e0d8"
+		},
+		{
+			"ImportPath": "github.com/jpillora/sizestr",
+			"Rev": "3b69bac6ee66e8e32dfeddb7c8e4ba6f33103069"
+		},
+		{
+			"ImportPath": "github.com/kardianos/osext",
+			"Rev": "6e7f843663477789fac7c02def0d0909e969b4e5"
+		}
+	]
+}
