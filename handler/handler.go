@@ -55,14 +55,15 @@ func New(c Config) http.Handler {
 }
 
 type request struct {
-	Time                          time.Time
-	Duration                      string
-	Location                      string `json:",omitempty"`
-	IP, Proto, Host, Method, Path string
-	Headers                       map[string]string
-	Body, BodyURL, BodyMD5        string `json:",omitempty"`
-	Error, Sleep                  string `json:",omitempty"`
-	Status                        int    `json:",omitempty"`
+	Time                   time.Time
+	Duration               string
+	Location               string `json:",omitempty"`
+	IP, DNS, Proto         string `json:",omitempty"`
+	Host, Method, Path     string `json:",omitempty"`
+	Headers                map[string]string
+	Body, BodyURL, BodyMD5 string `json:",omitempty"`
+	Error, Sleep           string `json:",omitempty"`
+	Status                 int    `json:",omitempty"`
 }
 
 var (
@@ -99,6 +100,10 @@ func (e *echoHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.IP == "" {
 		req.IP, _, _ = net.SplitHostPort(r.RemoteAddr)
+	}
+
+	if hosts, err := net.LookupAddr(req.IP); err == nil && len(hosts) > 0 {
+		req.DNS = hosts[0]
 	}
 
 	req.Proto = h.Get("X-Forwarded-Proto")
