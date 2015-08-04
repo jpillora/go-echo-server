@@ -13,7 +13,7 @@ var VERSION string = "0.0.0-src"
 
 func main() {
 	c := struct {
-		Port        int `help:"Port"`
+		Port        int `help:"Port" env:"PORT"`
 		echo.Config `type:"embedded"`
 	}{
 		Port: 3000,
