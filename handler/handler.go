@@ -103,13 +103,14 @@ func (e *echoHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Headers:  map[string]string{},
 	}
 
-	if req.Path == "/ping" {
+	//special cases
+	if req.Path == "/favicon.ico" {
+		return
+	} else if req.Path == "/ping" {
 		w.Write([]byte("pong"))
 		return
-	}
-
-	//xdomain cors proxy
-	if r.URL.Path == "/proxy.html" {
+	} else if r.URL.Path == "/proxy.html" {
+		//xdomain cors proxy
 		src := r.URL.Query().Get("src")
 		if src == "" {
 			src = "//cdn.rawgit.com/jpillora/xdomain/0.7.3/dist/xdomain.min.js"
