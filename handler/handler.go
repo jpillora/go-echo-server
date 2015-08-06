@@ -5,9 +5,11 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"mime"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -20,8 +22,9 @@ import (
 	"github.com/jpillora/requestlog"
 )
 
-const (
+var (
 	jsonType = "application/json; charset=utf8"
+	debug    = os.Getenv("DEBUG") != ""
 )
 
 type Config struct {
@@ -59,15 +62,22 @@ func New(c Config) http.Handler {
 }
 
 type request struct {
-	Time                   time.Time
-	Duration               string
-	Location               string `json:",omitempty"`
-	IP, DNS, Proto         string `json:",omitempty"`
-	Host, Method, Path     string `json:",omitempty"`
-	Headers                map[string]string
-	Body, BodyURL, BodyMD5 string `json:",omitempty"`
-	Error, Sleep           string `json:",omitempty"`
-	Status                 int    `json:",omitempty"`
+	Time     time.Time         `json:"time"`
+	Duration string            `json:"duration"`
+	Location string            `json:"location,omitempty"`
+	IP       string            `json:"ip"`
+	DNS      string            `json:"dns,omitempty"`
+	Proto    string            `json:"proto,omitempty"`
+	Host     string            `json:"host,omitempty"`
+	Method   string            `json:"method,omitempty"`
+	Path     string            `json:",omitempty"`
+	Headers  map[string]string `json:"headers"`
+	Body     string            `json:"body,omitempty"`
+	BodyURL  string            `json:"bodyURL,omitempty"`
+	BodyMD5  string            `json:"bodyMD5,omitempty"`
+	Error    string            `json:"error,omitempty"`
+	Sleep    string            `json:"sleep,omitempty"`
+	Status   int               `json:"status,omitempty"`
 }
 
 var (
@@ -126,7 +136,6 @@ func (e *echoHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if req.IP == "" {
 		req.IP, _, _ = net.SplitHostPort(r.RemoteAddr)
 	}
-
 	if hosts, err := net.LookupAddr(req.IP); err == nil && len(hosts) > 0 {
 		req.DNS = hosts[0]
 	}
@@ -157,6 +166,7 @@ func (e *echoHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	e.requests = append(e.requests, req)
 	e.stats.Echoes++
+	id := e.stats.Echoes
 	e.lock.Unlock()
 
 	//return files
@@ -187,6 +197,9 @@ func (e *echoHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				size = n
 			}
 		} else if strings.HasPrefix(k, "cf-") || strings.HasPrefix(k, "x-") {
+			if debug {
+				fmt.Printf("%d: skipping header %s=%s", id, k, v)
+			}
 			continue
 		}
 		req.Headers[k] = v
