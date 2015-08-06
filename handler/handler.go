@@ -20,6 +20,10 @@ import (
 	"github.com/jpillora/requestlog"
 )
 
+const (
+	jsonType = "application/json; charset=utf8"
+)
+
 type Config struct {
 	Log bool `help:"Enable logging"`
 	// Verbose bool `help:"Enable verbose logging"`
@@ -88,6 +92,27 @@ func (e *echoHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Headers:  map[string]string{},
 	}
 
+	if req.Path == "/ping" {
+		w.Write([]byte("pong"))
+		return
+	}
+
+	if req.Path == "/proxy.html" {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`
+		<!DOCTYPE HTML>
+		<script src="//cdn.rawgit.com/jpillora/xdomain/0.7.3/dist/xdomain.min.js" master="http://abc.example.com"></script>
+		`))
+		return
+	}
+
+	//cors
+	if o := h.Get("Origin"); o != req.Host {
+		w.Header().Set("Access-Control-Allow-Origin", o)
+		w.Header().Set("Access-Control-Allow-Methods", "*")
+		w.Header().Set("Access-Control-Allow-Headers", "*")
+	}
+
 	//extract city from cloudflare ray ID
 	if m := cityPath.FindStringSubmatch(h.Get("cf-ray")); len(m) > 0 {
 		req.Location += m[1]
@@ -125,7 +150,7 @@ func (e *echoHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			v = &e.stats
 		}
 		b, _ := json.MarshalIndent(v, "", "  ")
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", jsonType)
 		w.Write(b)
 		e.lock.Unlock()
 		return
@@ -223,7 +248,7 @@ func (e *echoHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	req.Duration = time.Since(req.Time).String()
 	b, _ := json.MarshalIndent(req, "", "  ")
-	w.Header().Set("Content-Type", "application/json; charset=utf8")
+	w.Header().Set("Content-Type", jsonType)
 	w.WriteHeader(status)
 	w.Write(b)
 }
