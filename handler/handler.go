@@ -1,11 +1,12 @@
 package echo
 
 import (
-	"bytes"
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"mime"
 	"net"
 	"net/http"
@@ -70,12 +71,11 @@ type request struct {
 	Proto    string            `json:"proto,omitempty"`
 	Host     string            `json:"host,omitempty"`
 	Method   string            `json:"method,omitempty"`
-	Path     string            `json:",omitempty"`
+	Path     string            `json:"path,omitempty"`
 	Headers  map[string]string `json:"headers"`
-	Body     string            `json:"body,omitempty"`
-	BodyURL  string            `json:"bodyURL,omitempty"`
-	BodyMD5  string            `json:"bodyMD5,omitempty"`
-	Error    string            `json:"error,omitempty"`
+	Form     map[string]body   `json:"form,omitempty"`
+	Body     body              `json:"body,omitempty"`
+	Error    error             `json:"error,omitempty"`
 	Sleep    string            `json:"sleep,omitempty"`
 	Status   int               `json:"status,omitempty"`
 }
@@ -86,6 +86,7 @@ var (
 	statusPath   = regexp.MustCompile(`\/status\/([0-9]{3})(\/$)?`)
 	echoPath     = regexp.MustCompile(`^\/echo(es)?(\/([0-9]+))?$`)
 	cityPath     = regexp.MustCompile(`(-[A-Z]+)$`)
+	formType     = regexp.MustCompile(`\bform\b`)
 	defaultmtype = "application/octet-stream"
 )
 
@@ -107,11 +108,16 @@ func (e *echoHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Path == "/proxy.html" {
+	//xdomain cors proxy
+	if r.URL.Path == "/proxy.html" {
+		src := r.URL.Query().Get("src")
+		if src == "" {
+			src = "//cdn.rawgit.com/jpillora/xdomain/0.7.3/dist/xdomain.min.js"
+		}
 		w.Header().Set("Content-Type", "text/html")
 		w.Write([]byte(`
 		<!DOCTYPE HTML>
-		<script src="//cdn.rawgit.com/jpillora/xdomain/0.7.3/dist/xdomain.min.js" master="http://abc.example.com"></script>
+		<script src="` + src + `" master="http://abc.example.com"></script>
 		`))
 		return
 	}
@@ -188,15 +194,10 @@ func (e *echoHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//copy headers
-	size := bytes.MinRead
 	for k, _ := range h {
 		k = strings.ToLower(k)
 		v := h.Get(k)
-		if k == "content-length" {
-			if n, err := strconv.Atoi(v); err == nil {
-				size = n
-			}
-		} else if strings.HasPrefix(k, "cf-") || strings.HasPrefix(k, "x-") {
+		if strings.HasPrefix(k, "cf-") || strings.HasPrefix(k, "x-") {
 			if debug {
 				fmt.Printf("%d: skipping header %s=%s", id, k, v)
 			}
@@ -205,39 +206,57 @@ func (e *echoHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		req.Headers[k] = v
 	}
 
-	fname := ""
-	mtype := h.Get("Content-Type")
-	body := r.Body
-	//extract file from multipart form
-	if r, err := r.MultipartReader(); err == nil {
-		p, err := r.NextPart()
-		if err == nil && p.FormName() == "file" {
-			fname = p.FileName()
-			mtype = p.Header.Get("Content-Type")
-			if mtype == defaultmtype {
-				mtype = mime.TypeByExtension(filepath.Ext(p.FileName()))
-			}
-			body = p
-		}
-	}
-
-	defer body.Close()
-	buf := bytes.NewBuffer(make([]byte, 0, size))
-	n, err := buf.ReadFrom(body)
-	if err == nil && n > 0 {
-		b := buf.Bytes()
-		hash := md5.New()
-		hash.Write([]byte(mtype + "|"))
-		hash.Write(b)
-		req.BodyMD5 = hex.EncodeToString(hash.Sum(nil))
-		if utf8.Valid(b) {
-			req.Body = string(b)
+	//parse form fields
+	contentType := h.Get("Content-Type")
+	if strings.HasPrefix(contentType, "multipart/form-data;") {
+		req.Form = map[string]body{}
+		if reader, err := r.MultipartReader(); err != nil {
+			req.Error = err
 		} else {
-			e.cache.Add(req.BodyMD5, fname, mtype, b)
-			req.BodyURL = req.Proto + "://" + req.Host + "/file/" + req.BodyMD5
+			for {
+				p, err := reader.NextPart()
+				if err != nil {
+					if err != io.EOF {
+						req.Error = err
+					}
+					break
+				}
+				k := p.FormName()
+				body, err := e.extractBody(p, p.FileName(), p.Header.Get("Content-Type"))
+				if err != nil {
+					req.Error = err
+					break
+				}
+				req.Form[k] = body
+			}
 		}
-	} else if err != nil {
-		req.Error = "Download failed: " + err.Error()
+	} else if formType.MatchString(contentType) {
+		req.Form = map[string]body{}
+		if err := r.ParseForm(); err != nil {
+			req.Error = err
+		} else {
+			for k, _ := range r.Form {
+				if p, h, err := r.FormFile(k); err == nil {
+					body, err := e.extractBody(p, h.Filename, h.Header.Get("Content-Type"))
+					if err != nil {
+						fmt.Printf("Failed to extract form file: %s: %s", k, err)
+					} else {
+						req.Form[k] = body
+					}
+				} else {
+					req.Form[k] = body(r.FormValue(k))
+				}
+			}
+		}
+	} else {
+		//otherwise just use body as is
+		body, err := e.extractBody(r.Body, r.URL.Path, h.Get("Content-Type"))
+		if err != nil {
+			fmt.Printf("Failed to extract body: %s", err)
+			req.Error = err
+		} else {
+			req.Body = body
+		}
 	}
 
 	if m := delayPath.FindStringSubmatch(req.Path); len(m) > 0 {
@@ -264,4 +283,45 @@ func (e *echoHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", jsonType)
 	w.WriteHeader(status)
 	w.Write(b)
+}
+
+type body interface{}
+
+type bodyValues struct {
+	String string `json:"val,omitempty"`
+	Length int    `json:"length,omitempty"`
+	Type   string `json:"type,omitempty"`
+	MD5    string `json:"md5,omitempty"`
+	URL    string `json:"url,omitempty"`
+}
+
+func (e *echoHandler) extractBody(r io.ReadCloser, fileName, mimeType string) (body, error) {
+	defer r.Close()
+	bytes, err := ioutil.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+	//either display it as a string or store as file
+	if utf8.Valid(bytes) {
+		return body(string(bytes)), nil
+	}
+
+	//calc mime
+	if (mimeType == "" || mimeType == defaultmtype) && fileName != "" {
+		mimeType = mime.TypeByExtension(filepath.Ext(fileName))
+	}
+	//hash bytes
+	hash := md5.New()
+	hash.Write([]byte(mimeType + "|"))
+	hash.Write(bytes)
+	md5 := hex.EncodeToString(hash.Sum(nil))
+
+	b := &bodyValues{
+		Length: len(bytes),
+		Type:   mimeType,
+		MD5:    md5,
+		URL:    "/file/" + md5,
+	}
+	e.cache.Add(b.MD5, fileName, mimeType, bytes)
+	return b, nil
 }
