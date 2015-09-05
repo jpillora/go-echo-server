@@ -19,6 +19,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"golang.org/x/net/websocket"
+
 	"github.com/jpillora/go-echo-server/filecache"
 	"github.com/jpillora/requestlog"
 )
@@ -40,6 +42,7 @@ type echoHandler struct {
 	lock     sync.Mutex
 	stats    echoStats
 	requests []*request
+	ws       http.Handler
 }
 
 type echoStats struct {
@@ -48,7 +51,7 @@ type echoStats struct {
 }
 
 func New(c Config) http.Handler {
-	var h http.Handler = &echoHandler{
+	e := &echoHandler{
 		config: c,
 		cache:  filecache.New(250 * 1000 * 1000), //250Mb
 		stats: echoStats{
@@ -56,6 +59,8 @@ func New(c Config) http.Handler {
 		},
 		requests: nil,
 	}
+	e.ws = websocket.Handler(e.serveWS)
+	var h http.Handler = e
 	if c.Log {
 		h = requestlog.Wrap(h)
 	}
@@ -82,8 +87,9 @@ type request struct {
 
 var (
 	filePath     = regexp.MustCompile(`^\/file\/([a-f0-9]{` + strconv.Itoa(md5.Size*2) + `})$`)
-	delayPath    = regexp.MustCompile(`\/(sleep|delay)\/([0-9]+)(m?s)?(\/$)?`)
-	statusPath   = regexp.MustCompile(`\/status\/([0-9]{3})(\/$)?`)
+	delayPath    = regexp.MustCompile(`\/(sleep|delay)\/([0-9]+)(m?s)?(\/|$)?`)
+	statusPath   = regexp.MustCompile(`\/status\/([0-9]{3})(\/|$)`)
+	authPath     = regexp.MustCompile(`\/auth\/(\w+):(\w+)(\/|$)`)
 	echoPath     = regexp.MustCompile(`^\/echo(es)?(\/([0-9]+))?$`)
 	cityPath     = regexp.MustCompile(`(-[A-Z]+)$`)
 	formType     = regexp.MustCompile(`\bform\b`)
@@ -91,16 +97,31 @@ var (
 )
 
 func (e *echoHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	h := r.Header
 
+	h := r.Header
 	//echo request
-	req := &request{
+	req := request{
 		Time:     time.Now(),
 		Location: h.Get("cf-ipcountry"),
 		Method:   r.Method,
 		Host:     r.Host,
 		Path:     r.URL.RequestURI(),
 		Headers:  map[string]string{},
+	}
+
+	if m := authPath.FindStringSubmatch(req.Path); len(m) > 0 {
+		if u, p, ok := r.BasicAuth(); !ok || u != m[1] || p != m[2] {
+			w.Header().Set("WWW-Authenticate", "Basic")
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte("Unauthorized"))
+			return
+		}
+	}
+
+	//special echo-websockets mode
+	if h.Get("Connection") == "Upgrade" {
+		e.ws.ServeHTTP(w, r)
+		return
 	}
 
 	//special cases
@@ -171,7 +192,7 @@ func (e *echoHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		e.lock.Unlock()
 		return
 	}
-	e.requests = append(e.requests, req)
+	e.requests = append(e.requests, &req)
 	e.stats.Echoes++
 	id := e.stats.Echoes
 	e.lock.Unlock()
@@ -280,10 +301,35 @@ func (e *echoHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req.Duration = time.Since(req.Time).String()
-	b, _ := json.MarshalIndent(req, "", "  ")
+	b, _ := json.MarshalIndent(&req, "", "  ")
 	w.Header().Set("Content-Type", jsonType)
 	w.WriteHeader(status)
 	w.Write(b)
+}
+
+func (e *echoHandler) serveWS(conn *websocket.Conn) {
+	c := conn.Config()
+	r := conn.Request()
+	h := map[string]string{}
+	for k, _ := range r.Header {
+		h[k] = r.Header.Get(k)
+	}
+	b, _ := json.MarshalIndent(&struct {
+		Location string
+		Origin   string
+		Protocol []string
+		Version  int
+		Headers  map[string]string
+	}{
+		Location: c.Location.String(),
+		Origin:   c.Origin.String(),
+		Protocol: c.Protocol,
+		Version:  c.Version,
+		Headers:  h,
+	}, "", "  ")
+	conn.Write(b)
+	io.Copy(conn, conn)
+	conn.Close()
 }
 
 type body interface{}

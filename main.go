@@ -23,6 +23,7 @@ func main() {
 		Version(VERSION).
 		Repo("github.com/jpillora/go-echo-server").
 		Parse()
+
 	h := echo.New(c.Config)
 	log.Printf("Listening on %d...", c.Port)
 	log.Fatal(http.ListenAndServe(":"+strconv.Itoa(c.Port), h))
