@@ -8,6 +8,7 @@ import (
 
 //String representations of each scale
 var ScaleStrings = []string{"B", "KB", "MB", "GB", "TB", "PB", "XB"}
+var lowerCase = false
 
 //Default scale, could also be set to 1024
 var defaultScale = float64(1000)
@@ -15,19 +16,31 @@ var defaultScale = float64(1000)
 //Default number of Significant Figures
 var defaultSigFigures = float64(3) //must 10^SigFigures >= Scale
 
-//ToggleCase changes the case of the scale strings ("MB" -> "mb")
-func ToggleCase() {
+func setCase() {
 	for i, s := range ScaleStrings {
 		if lowerCase {
-			ScaleStrings[i] = strings.ToUpper(s)
-		} else {
 			ScaleStrings[i] = strings.ToLower(s)
+		} else {
+			ScaleStrings[i] = strings.ToUpper(s)
 		}
 	}
-	lowerCase = !lowerCase
 }
 
-var lowerCase = false
+//ToggleCase changes the case of the scale strings ("MB" -> "mb")
+func ToggleCase() {
+	lowerCase = !lowerCase
+	setCase()
+}
+
+func UpperCase() {
+	lowerCase = false
+	setCase()
+}
+
+func LowerCase() {
+	lowerCase = false
+	setCase()
+}
 
 //Converts a byte count into a byte string
 func ToString(n int64) string {
