@@ -40,10 +40,6 @@ See [the latest release](https://github.com/jpillora/go-echo-server/releases/lat
 $ go get -v github.com/jpillora/go-echo-server
 ```
 
-## Deploy
-
-[![Deploy](https://www.herokucdn.com/deploy/button.png)](https://heroku.com/deploy)
-
 #### MIT License
 
 Copyright © 2014 Jaime Pillora &lt;dev@jpillora.com&gt;
